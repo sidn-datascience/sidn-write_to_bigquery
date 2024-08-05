@@ -50,7 +50,7 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     load_job = client.load_table_from_dataframe(
         dataframe = data,
         destination = table,
-        job_id = f"{job_id_prefix}_{pd.to_datetime("now").strftime('%Y%m%d%H%M%S')}",
+        job_id = f"{job_id_prefix}_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}",
         job_config = job_config,
         project = project_id
     )
