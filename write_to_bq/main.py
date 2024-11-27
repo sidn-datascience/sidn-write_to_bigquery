@@ -56,7 +56,7 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     print(f"Load job creado con el siguiente id: {load_job.job_id}.")
     return load_job
 
-def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str) -> None:
+def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str) -> tuple[bigquery.LoadJob]:
     """Sends a pandas DataFrame to a BigQuery table with automatic schema handling and data merging.
 
     Args:
@@ -66,6 +66,11 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
         table_id (str): The ID of the BigQuery table to be loaded with the data.
         job_id_prefix (str): A prefix for job IDs to avoid naming conflicts.
 
+    Returns:
+        load_job: the job to load the temporary table
+        merge_job: merges the temporary table into the production table
+        delete_job: drops the temporary table once the merge is done
+    
     Raises:
         Exception: An exception with details on errors encountered during the process.
     """
