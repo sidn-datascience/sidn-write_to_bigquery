@@ -1,1 +1,1 @@
-from .main import writeDfToBq
+from .main import writeDfToBq, writeDfToBq_with_merging
