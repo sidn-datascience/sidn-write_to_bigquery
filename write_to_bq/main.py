@@ -27,9 +27,8 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     # Load job configuration
     job_config = bigquery.LoadJobConfig()
     job_config.source_format = bigquery.SourceFormat.PARQUET
-    job_config.create_disposition = bigquery.CreateDisposition.CREATE_IF_NEEDED # Si la tabla no existe, se crea
-    job_config.write_disposition = bigquery.WriteDisposition.WRITE_APPEND # Si la tabla existe, se hace append
-    # job_config.time_partitioning = bigquery.table.TimePartitioning(type_='DAY') # Particionamiento de la tabla en base al día de subida
+    job_config.create_disposition = bigquery.CreateDisposition.CREATE_IF_NEEDED
+    job_config.write_disposition = bigquery.WriteDisposition.WRITE_APPEND
 
     # Schema handling (automatic or based on existing table)
     try:
@@ -77,7 +76,7 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
     job_config = bigquery.LoadJobConfig()
     job_config.source_format = bigquery.SourceFormat.PARQUET
     job_config.create_disposition = bigquery.CreateDisposition.CREATE_IF_NEEDED
-    job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
+    job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE # if the table exists, overwrite it
 
     # Schema handling (automatic or based on existing table)
     try:
