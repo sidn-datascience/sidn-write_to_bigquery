@@ -56,23 +56,38 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     print(f"Load job creado con el siguiente id: {load_job.job_id}.")
     return load_job
 
-def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str) -> tuple[bigquery.LoadJob]:
-    """Sends a pandas DataFrame to a BigQuery table with automatic schema handling and data merging.
+def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str, cols_to_check:list=[], cols_to_update:list=[]) -> tuple[bigquery.LoadJob]:
+    """Sends a pandas DataFrame to a BigQuery table, performing schema handling, data loading, and merging with the existing data.
+
+    This function loads data from a pandas DataFrame into a temporary BigQuery table, merges the data with an existing target table,
+    and then deletes the temporary table after the merge. The schema is either detected automatically or based on the existing table schema.
 
     Args:
-        data (pd.DataFrame): The pandas DataFrame to be loaded into BigQuery.
-        project_id (str): The ID of your GCP project where the BigQuery dataset resides.
+        data (pd.DataFrame): The pandas DataFrame containing the data to be loaded into BigQuery.
+        project_id (str): The ID of the Google Cloud project where the BigQuery dataset resides.
         dataset_id (str): The ID of the BigQuery dataset containing the target table.
-        table_id (str): The ID of the BigQuery table to be loaded with the data.
-        job_id_prefix (str): A prefix for job IDs to avoid naming conflicts.
+        table_id (str): The ID of the BigQuery table to merge the data into.
+        job_id_prefix (str): A prefix for the job IDs to avoid conflicts between multiple jobs.
+        cols_to_check (list, optional): A list of column names used to match records between the source and target tables. Defaults to columns with non-numeric types in `data`.
+        cols_to_update (list, optional): A list of column names to update in the target table if a match is found. Defaults to numeric columns in `data`.
 
     Returns:
-        load_job: the job to load the temporary table
-        merge_job: merges the temporary table into the production table
-        delete_job: drops the temporary table once the merge is done
-    
+        tuple: A tuple containing three job objects:
+            - load_job (bigquery.LoadJob): The job that loads data into the temporary table.
+            - merge_job (bigquery.QueryJob): The job that performs the merge operation from the temporary table to the target table.
+            - delete_job (bigquery.QueryJob): The job that deletes the temporary table after the merge operation.
+
     Raises:
-        Exception: An exception with details on errors encountered during the process.
+        Exception: If any errors occur during the load, merge, or delete operations, an exception is raised with details about the errors.
+
+    Example:
+        load_job, merge_job, delete_job = writeDfToBq_with_merging(
+            data=df, 
+            project_id='my_project', 
+            dataset_id='my_dataset', 
+            table_id='my_table', 
+            job_id_prefix='job_123'
+        )
     """
     print("Creating the Bigquery client")
     bq_client = bigquery.Client(project=project_id)
