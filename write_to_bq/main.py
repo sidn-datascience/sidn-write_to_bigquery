@@ -56,7 +56,7 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     print(f"Load job creado con el siguiente id: {load_job.job_id}.")
     return load_job
 
-def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str) -> None:
+def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str, cols_to_check:list=[], cols_to_update:list=[]) -> None:
     """Sends a pandas DataFrame to a BigQuery table with automatic schema handling and data merging.
 
     Args:
@@ -111,8 +111,8 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
         raise Exception(f"Se han detectado {len(load_job.errors)} errores durante la ejecución de {load_job.job_id}:\n{[err for err in load_job.errors]}")
 
     # Merging the temp table into the target table
-    dimensions = data.select_dtypes(exclude=['float','int']).columns
-    metrics = data.select_dtypes(include=['float','int']).columns
+    cols_to_check = cols_to_check if len(cols_to_check) > 0 else data.select_dtypes(exclude=['float','int']).columns
+    cols_to_update = data.select_dtypes(include=['float','int']).columns
 
     NL = '\n' # new line for f-strings
     merge_query = f"""
@@ -120,13 +120,13 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
         BEGIN TRANSACTION;
             MERGE INTO `{project_id}.{dataset_id}.{table_id}` AS target
             USING `{project_id}.{dataset_id}.{table_id}_temptable` AS source
-            ON {f'{NL}AND '.join([f'target.{dimension} = source.{dimension}' for dimension in dimensions])}
+            ON {f'{NL}AND '.join([f'target.{to_check} = source.{to_check}' for to_check in cols_to_check])}
             WHEN MATCHED THEN
             UPDATE SET
-                {f',{NL}'.join([f'target.{metric} = source.{metric}' for metric in metrics])}
+                {f',{NL}'.join([f'target.{to_update} = source.{to_update}' for to_update in cols_to_update])}
             WHEN NOT MATCHED THEN
-                INSERT ({', '.join([*dimensions,*metrics])})
-                VALUES ({', '.join([f'source.{element}' for element in [*dimensions,*metrics]])});
+                INSERT ({', '.join([*cols_to_check,*cols_to_update])})
+                VALUES ({', '.join([f'source.{element}' for element in [*cols_to_check,*cols_to_update]])});
 
         COMMIT TRANSACTION;
         
