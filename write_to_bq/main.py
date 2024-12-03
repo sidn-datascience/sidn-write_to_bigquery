@@ -132,7 +132,7 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
 
     # Merging the temp table into the target table
     cols_to_check = cols_to_check if len(cols_to_check) > 0 else data.select_dtypes(exclude=['float','int']).columns
-    cols_to_update = data.select_dtypes(include=['float','int']).columns
+    cols_to_update = cols_to_update if len(cols_to_update) > 0. else data.select_dtypes(include=['float','int']).columns
 
     NL = '\n' # new line for f-strings
     merge_query = f"""
