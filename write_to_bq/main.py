@@ -56,7 +56,16 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     print(f"Load job creado con el siguiente id: {load_job.job_id}.")
     return load_job
 
-def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str, job_id_prefix:str, cols_to_check:list=[], cols_to_update:list=[]) -> tuple[bigquery.LoadJob]:
+
+def writeDfToBq_with_merging(
+    data:pd.DataFrame,
+    project_id:str,
+    dataset_id:str,
+    table_id:str,
+    job_id_prefix:str,
+    cols_to_check:list=[],
+    cols_to_update:list=[]
+) -> tuple[bigquery.LoadJob, bigquery.QueryJob, bigquery.QueryJob]:
     """Sends a pandas DataFrame to a BigQuery table, performing schema handling, data loading, and merging with the existing data.
 
     This function loads data from a pandas DataFrame into a temporary BigQuery table, merges the data with an existing target table,
@@ -89,14 +98,29 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
             job_id_prefix='job_123'
         )
     """
+    cols_to_check = (
+        cols_to_check 
+        if len(cols_to_check) > 0 
+        else data.select_dtypes(exclude=['float','int']).columns
+    )
+    if len(cols_to_check) == 0:
+        raise Exception("No columns to check were provided.")
+    
+    cols_to_update = (
+        cols_to_update 
+        if len(cols_to_update) > 0 
+        else data.select_dtypes(include=['float','int']).columns
+    )
+
     print("Creating the Bigquery client")
     bq_client = bigquery.Client(project=project_id)
     table = bigquery.Table(f"{project_id}.{dataset_id}.{table_id}")
     temp_table = bigquery.Table(f"{project_id}.{dataset_id}.{table_id}_temptable")
-    job_config = bigquery.LoadJobConfig()
-    job_config.source_format = bigquery.SourceFormat.PARQUET
-    job_config.create_disposition = bigquery.CreateDisposition.CREATE_IF_NEEDED
-    job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE # if the table exists, overwrite it
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.PARQUET,
+        create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE # if the table exists, overwrite it
+    )
 
     # Schema handling (automatic or based on existing table)
     try:
@@ -105,15 +129,17 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
         
         # Remove fields from the schema that are not present in the DataFrame
         fields_to_remove = [field for field in table_schema if field.name not in data.columns]
+
         for field in fields_to_remove:
             table_schema.remove(field)
         job_config.schema = table_schema
+        print(table_schema)
         job_config.autodetect = False # Use the provided schema
     except:
         job_config.autodetect = True
         print('No se ha podido recuperar el esquema de la tabla. Es posible que la tabla no exista.')
-
-    # Create the load job
+    
+    # STEP 1: Create the load job
     load_job = bq_client.load_table_from_dataframe(
         dataframe = data,
         destination = temp_table,
@@ -130,24 +156,34 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
     except Exception as e:
         raise Exception(f"Se han detectado {len(load_job.errors)} errores durante la ejecución de {load_job.job_id}:\n{[err for err in load_job.errors]}")
 
-    # Merging the temp table into the target table
-    cols_to_check = cols_to_check if len(cols_to_check) > 0 else data.select_dtypes(exclude=['float','int']).columns
-    cols_to_update = cols_to_update if len(cols_to_update) > 0 else data.select_dtypes(include=['float','int']).columns
+    # STEP 2: Merging the temp table into the target table
+
+    # Preparing the fields' list variables
+    temp_table_schema = bq_client.get_table(temp_table).schema
+    all_fields = [field.name for field in temp_table_schema]
+    repeated_fields = [
+        field.name for field in temp_table_schema
+        if field.mode == "REPEATED"
+    ]
+    cols_to_update = [col for col in all_fields if col not in cols_to_check]
 
     NL = '\n' # new line for f-strings
+    on_clause_parts = [f"target.{col} = source.{col}" for col in cols_to_check]
+    on_clause_parts+= [f"target.{col} = source.{col}" for col in repeated_fields if col not in cols_to_check]
+    on_clause = f"{NL}AND ".join(on_clause_parts)
+
     merge_query = f"""
     BEGIN
         BEGIN TRANSACTION;
             MERGE INTO `{project_id}.{dataset_id}.{table_id}` AS target
             USING `{project_id}.{dataset_id}.{table_id}_temptable` AS source
-            ON {f'{NL}AND '.join([f'target.{to_check} = source.{to_check}' for to_check in cols_to_check])}
+            ON {on_clause}
             WHEN MATCHED THEN
             UPDATE SET
-                {f',{NL}'.join([f'target.{to_update} = source.{to_update}' for to_update in cols_to_update])}
+                {f', '.join([f'target.{col} = source.{col}' for col in cols_to_update])}
             WHEN NOT MATCHED THEN
-                INSERT ({', '.join([*cols_to_check,*cols_to_update])})
-                VALUES ({', '.join([f'source.{element}' for element in [*cols_to_check,*cols_to_update]])});
-
+                INSERT ROW
+                ;
         COMMIT TRANSACTION;
         
         EXCEPTION WHEN ERROR THEN
@@ -162,14 +198,14 @@ def writeDfToBq_with_merging(data:pd.DataFrame, project_id:str, dataset_id:str, 
     except Exception as e:
         raise Exception(f"Se han detectado {len(merge_job.errors)} errores durante la ejecución de {merge_job.job_id}:\n{[err for err in merge_job.errors]}")
     
-    # Delete the temptable after a correct merging
+    # STEP 3: Delete the temptable after a correct merging
     delete_job = bq_client.query(
         query=f"DROP TABLE `{project_id}.{dataset_id}.{table_id}_temptable`;",
         job_id=f"{job_id_prefix}_delete_temp_data_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}"
     )
     try:
         delete_output = delete_job.result()
-        print(f"Merge job {delete_job.job_id} executed. Output: {delete_output}.")
+        print(f"Delete job {delete_job.job_id} executed. Output: {delete_output}.")
     except Exception as e:
         raise Exception(f"Se han detectado {len(delete_job.errors)} errores durante la ejecución de {delete_job.job_id}:\n{[err for err in delete_job.errors]}")
     
