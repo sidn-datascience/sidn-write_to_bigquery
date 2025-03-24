@@ -56,6 +56,7 @@ def writeDfToBq(data:pd.DataFrame, project_id:str, dataset_id:str, table_id:str,
     print(f"Load job creado con el siguiente id: {load_job.job_id}.")
     return load_job
 
+
 def writeDfToBq_with_merging(
     data:pd.DataFrame,
     project_id:str,
@@ -155,7 +156,6 @@ def writeDfToBq_with_merging(
     except Exception as e:
         raise Exception(f"Se han detectado {len(load_job.errors)} errores durante la ejecución de {load_job.job_id}:\n{[err for err in load_job.errors]}")
 
-    
     # STEP 2: Merging the temp table into the target table
 
     # Preparing the fields' list variables
