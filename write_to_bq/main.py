@@ -97,19 +97,11 @@ def writeDfToBq_with_merging(
             job_id_prefix='job_123'
         )
     """
-    cols_to_check = (
-        cols_to_check 
-        if len(cols_to_check) > 0 
-        else data.select_dtypes(exclude=['float','int']).columns
-    )
+    cols_to_check = cols_to_check if len(cols_to_check) > 0 else data.select_dtypes(exclude=['float','int']).columns
     if len(cols_to_check) == 0:
         raise Exception("No columns to check were provided.")
     
-    cols_to_update = (
-        cols_to_update 
-        if len(cols_to_update) > 0 
-        else data.select_dtypes(include=['float','int']).columns
-    )
+    cols_to_update = cols_to_update if len(cols_to_update) > 0 else data.select_dtypes(include=['float','int']).columns
 
     print("Creating the Bigquery client")
     bq_client = bigquery.Client(project=project_id)
@@ -122,6 +114,7 @@ def writeDfToBq_with_merging(
     )
 
     # Schema handling (automatic or based on existing table)
+    table_schema = None
     try:
         # Attempt to get the existing production table schema
         table_schema = bq_client.get_table(table).schema 
@@ -134,13 +127,15 @@ def writeDfToBq_with_merging(
         job_config.schema = table_schema
         print(table_schema)
         job_config.autodetect = False # Use the provided schema
+        job_config.job_retry = None
     except:
         job_config.autodetect = True
         print('No se ha podido recuperar el esquema de la tabla. Es posible que la tabla no exista.')
     
     # STEP 1: Create the load job
+    all_fields = [field.name for field in table_schema] if table_schema else data.columns
     load_job = bq_client.load_table_from_dataframe(
-        dataframe = data,
+        dataframe = data.loc[:, all_fields],
         destination = temp_table,
         job_id = f"{job_id_prefix}_temptable_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}",
         job_config = job_config,
@@ -155,17 +150,15 @@ def writeDfToBq_with_merging(
     except Exception as e:
         raise Exception(f"Se han detectado {len(load_job.errors)} errores durante la ejecución de {load_job.job_id}:\n{[err for err in load_job.errors]}")
 
-    
     # STEP 2: Merging the temp table into the target table
 
     # Preparing the fields' list variables
     temp_table_schema = bq_client.get_table(temp_table).schema
-    all_fields = [field.name for field in temp_table_schema]
     repeated_fields = [
         field.name for field in temp_table_schema
         if field.mode == "REPEATED"
     ]
-    cols_to_update = [col for col in all_fields if col not in cols_to_check]
+    cols_to_update += [col for col in all_fields if col not in cols_to_check+cols_to_update]
 
     NL = '\n' # new line for f-strings
     on_clause_parts = [f"target.{col} = source.{col}" for col in cols_to_check]
@@ -191,7 +184,11 @@ def writeDfToBq_with_merging(
             ROLLBACK TRANSACTION;
     END;"""
     
-    merge_job = bq_client.query(query=merge_query, job_id=f"{job_id_prefix}_merge_data_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}")
+    merge_job = bq_client.query(
+        query=merge_query, 
+        job_id=f"{job_id_prefix}_merge_data_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}",
+        job_retry=None
+    )
     try:
         merge_output = merge_job.result()
         print(f"Merge job {merge_job.job_id} executed. Output: {merge_output}.")
@@ -201,7 +198,8 @@ def writeDfToBq_with_merging(
     # STEP 3: Delete the temptable after a correct merging
     delete_job = bq_client.query(
         query=f"DROP TABLE `{project_id}.{dataset_id}.{table_id}_temptable`;",
-        job_id=f"{job_id_prefix}_delete_temp_data_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}"
+        job_id=f"{job_id_prefix}_delete_temp_data_{pd.to_datetime('now').strftime('%Y%m%d%H%M%S')}",
+        job_retry=None
     )
     try:
         delete_output = delete_job.result()
